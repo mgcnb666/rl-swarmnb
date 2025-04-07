@@ -367,21 +367,65 @@ fi
 
 echo -e "\n${GREEN}${BOLD}Good luck in the swarm! Your training session is about to begin.\n${NC}"
 
-# Run the Python training script with appropriate parameters
-if [ -n "$ORG_ID" ]; then
-    python -m hivemind_exp.gsm8k.train_single_gpu \
-        --hf_token "$HUGGINGFACE_ACCESS_TOKEN" \
-        --identity_path "$IDENTITY_PATH" \
-        --modal_org_id "$ORG_ID" \
-        --config "$CONFIG_PATH"
-else
-    python -m hivemind_exp.gsm8k.train_single_gpu \
-        --hf_token "$HUGGINGFACE_ACCESS_TOKEN" \
-        --identity_path "$IDENTITY_PATH" \
-        --public_maddr "$PUB_MULTI_ADDRS" \
-        --initial_peers "$PEER_MULTI_ADDRS" \
-        --host_maddr "$HOST_MULTI_ADDRS" \
-        --config "$CONFIG_PATH"
-fi
+# 添加自动重启功能
+MAX_RETRIES=5
+RETRY_COUNT=0
+RETRY_DELAY=60  # 重启前等待时间(秒)
+
+run_training() {
+    # 根据是否有ORG_ID执行不同的命令
+    if [ -n "$ORG_ID" ]; then
+        python -m hivemind_exp.gsm8k.train_single_gpu \
+            --hf_token "$HUGGINGFACE_ACCESS_TOKEN" \
+            --identity_path "$IDENTITY_PATH" \
+            --modal_org_id "$ORG_ID" \
+            --config "$CONFIG_PATH"
+    else
+        python -m hivemind_exp.gsm8k.train_single_gpu \
+            --hf_token "$HUGGINGFACE_ACCESS_TOKEN" \
+            --identity_path "$IDENTITY_PATH" \
+            --public_maddr "$PUB_MULTI_ADDRS" \
+            --initial_peers "$PEER_MULTI_ADDRS" \
+            --host_maddr "$HOST_MULTI_ADDRS" \
+            --config "$CONFIG_PATH"
+    fi
+    return $?
+}
+
+# 主循环，实现自动重启功能
+while true; do
+    echo -e "${CYAN}启动训练程序 (尝试 $((RETRY_COUNT+1))/$((MAX_RETRIES+1)))${NC}"
+    
+    # 记录开始时间
+    START_TIME=$(date +%s)
+    
+    # 运行训练程序
+    run_training
+    EXIT_CODE=$?
+    
+    # 记录结束时间
+    END_TIME=$(date +%s)
+    RUNTIME=$((END_TIME-START_TIME))
+    
+    # 检查是否正常退出
+    if [ $EXIT_CODE -eq 0 ]; then
+        echo -e "${GREEN}训练程序正常完成，退出循环。${NC}"
+        break
+    fi
+    
+    # 检查最大重试次数
+    RETRY_COUNT=$((RETRY_COUNT+1))
+    if [ $RETRY_COUNT -gt $MAX_RETRIES ]; then
+        echo -e "${RED}达到最大重试次数($MAX_RETRIES)，不再尝试重启。${NC}"
+        break
+    fi
+    
+    # 记录崩溃日志
+    echo -e "${YELLOW}训练程序在运行${RUNTIME}秒后崩溃，退出码: $EXIT_CODE${NC}"
+    echo -e "${YELLOW}将在${RETRY_DELAY}秒后尝试重启...${NC}"
+    
+    # 等待一段时间后重启
+    sleep $RETRY_DELAY
+done
 
 wait
